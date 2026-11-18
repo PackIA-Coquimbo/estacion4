@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Se generan con simulador.py / entrenar.py / estacion4.py
+datos/
+modelos/
