@@ -272,3 +272,14 @@ class ReporteE4:
         if intentos + 1 < 5:
             self.pendientes.append((msg, intentos + 1))
         return [f"no se pudo enviar E4 de {msg['id_grupo']} (intento {intentos + 1}/5): {self.cliente.ultimo_error}"]
+
+# Bloque para enviar la predicción de la IA
+payload_prediccion = {
+    "id_lote": gestor.id_lote,
+    "estacion": "E4",
+    "timestamp": ahora_iso(),
+    "frutas_vistas": sum(vistas),
+    "categoria_predicha": r["categoria"],        
+    "probabilidades": r["probabilidades"],       
+    "pct_esperado": r["pct"],                    # {'pct_pasable', 'pct_chica', 'pct_mediana', 'pct_grande'}
+}
