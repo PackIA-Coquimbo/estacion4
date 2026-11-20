@@ -9,6 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from arduino import ArduinoSimulado  # noqa: E402
 import normalizar  # noqa: E402
 from clasificador import ColaFIFO, GestorBache, decidir, PaqueteFruta  # noqa: E402
 from fuentes import FuenteArchivos, FuenteE5, ReporteE4  # noqa: E402
@@ -94,6 +95,47 @@ class TestCola(unittest.TestCase):
 
 class TestFuenteArchivos(unittest.TestCase):
     """Usa el formato real de los manifiestos de E1 y del resultado de E2."""
+
+    def test_simulacion_archivos_con_arduino_y_reporte_local(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "salidas" / "LOTE-X").mkdir(parents=True)
+            fuente = FuenteArchivos([str(tmp / "salidas")], str(tmp / "e2.json"), str(tmp / "e3.json"))
+            cola = ColaFIFO()
+            reporte = ReporteE4(None, fuente.esperadas)
+
+            for i, estado in ((1, "aceptada"), (2, "repetir_captura")):
+                (tmp / "salidas" / "LOTE-X" / f"captura_{i}.json").write_text(json.dumps({
+                    "id_lote": "LOTE-X", "id_fruta": f"fruta_00{i}",
+                    "timestamp": f"2026-11-18T10:00:0{i}Z", "estado_captura": estado,
+                }), encoding="utf-8")
+            (tmp / "e2.json").write_text(json.dumps({
+                "station_id": 2, "timestamp": 1731950000.123,
+                "predicted_class": "buen_estado", "confidence_percent": 91.0,
+            }), encoding="utf-8")
+            # Muestra simulada de E3: la estación actual aún no publica este archivo.
+            (tmp / "e3.json").write_text(json.dumps({
+                "timestamp": 1731950001.0, "tamano": "grande", "diametro_mm": 67.2,
+            }), encoding="utf-8")
+
+            fuente.leer(cola)
+            arduino = ArduinoSimulado(cola, retardo_s=0)
+            decisiones = []
+            mensajes = []
+            while len(cola):
+                self.assertEqual(arduino.eventos(), ["FRUTA"])
+                decision = cola.disparo_sensor()
+                decisiones.append(decision)
+                arduino.mover(decision.caja)
+                mensajes.extend(reporte.agregar(decision))
+
+            self.assertEqual([d.categoria_final for d in decisiones],
+                             ["exportacion", "revision_manual"])
+            self.assertEqual(arduino.movimientos, [4, 1])
+            reportes = [json.loads(msg.split("E4 -> ", 1)[1]) for msg in mensajes]
+            self.assertEqual([m["frutas"][0]["categoria_final"] for m in reportes],
+                             ["exportacion", "revision_manual"])
+            arduino.cerrar()
 
     def test_tamano_desconocido_no_se_convierte_en_mediano(self):
         with tempfile.TemporaryDirectory() as tmp:
