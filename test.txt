@@ -1,0 +1,48 @@
+python -m unittest discover -s tests -v
+
+-----
+
+$base = "C:\temp\e4-prueba"
+New-Item -ItemType Directory -Force "$base\e1" | Out-Null
+
+python estacion4.py --fuente archivos --e1 "$base\e1" --e2 "$base\e2.json" --e3 "$base\e3.json" --simular-arduino --retardo-sim 1 --sin-envio --duracion 20
+
+
+-----
+
+
+@'
+import json
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+base = Path(r"C:\temp\e4-prueba")
+(base / "e1").mkdir(parents=True, exist_ok=True)
+
+def publicar(ruta, datos):
+    destino = base / ruta
+    temporal = destino.with_suffix(destino.suffix + ".tmp")
+    temporal.write_text(json.dumps(datos), encoding="utf-8")
+    temporal.replace(destino)
+
+publicar("e1/fruta_001.json", {
+    "version_interfaz": 2,
+    "estacion_origen": 1,
+    "id_lote": "LOTE-DEMO",
+    "id_fruta": "fruta_001",
+    "timestamp": datetime.now(timezone.utc).isoformat(),
+    "estado_captura": "aceptada"
+})
+publicar("e2.json", {
+    "station_id": 2,
+    "timestamp": time.time(),
+    "predicted_class": "buen_estado",
+    "confidence_percent": 91.0
+})
+publicar("e3.json", {
+    "timestamp": time.time() + 0.1,
+    "tamano": "grande",
+    "diametro_mm": 67.2
+})
+'@ | python -
