@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import normalizar  # noqa: E402
 from clasificador import ColaFIFO, GestorBache, decidir, PaqueteFruta  # noqa: E402
-from fuentes import FuenteArchivos, ReporteE4  # noqa: E402
+from fuentes import FuenteArchivos, FuenteE5, ReporteE4  # noqa: E402
 
 
 def paquete(estado, tamano, conf=0.9):
@@ -57,6 +57,10 @@ class TestRegla(unittest.TestCase):
         self.assertEqual((d.categoria_final, d.motivo, d.requiere_revision_manual),
                          ("revision_manual", "incompleto", True))
         self.assertTrue(decidir(paquete("Buena", "Grande", conf=0.5)).requiere_revision_manual)
+        invalida = paquete("Buena", "Grande")
+        invalida.foto_valida = False
+        d = decidir(invalida)
+        self.assertEqual((d.caja, d.categoria_final, d.probabilidad), (1, "revision_manual", 0.0))
 
 
 class TestCola(unittest.TestCase):
@@ -90,6 +94,30 @@ class TestCola(unittest.TestCase):
 
 class TestFuenteArchivos(unittest.TestCase):
     """Usa el formato real de los manifiestos de E1 y del resultado de E2."""
+
+    def test_tamano_desconocido_no_se_convierte_en_mediano(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "salidas" / "LOTE-X").mkdir(parents=True)
+            fuente = FuenteArchivos([str(tmp / "salidas")], str(tmp / "e2.json"), str(tmp / "e3.json"))
+            cola = ColaFIFO()
+
+            (tmp / "salidas" / "LOTE-X" / "captura.json").write_text(json.dumps({
+                "id_lote": "LOTE-X", "id_fruta": "fruta_001",
+                "timestamp": "2026-11-18T10:00:01Z", "estado_captura": "aceptada",
+            }), encoding="utf-8")
+            (tmp / "e2.json").write_text(json.dumps({
+                "timestamp": 1, "predicted_class": "buen_estado", "confidence_percent": 91,
+            }), encoding="utf-8")
+            (tmp / "e3.json").write_text(json.dumps({
+                "timestamp": 2, "tamano": "desconocido",
+            }), encoding="utf-8")
+
+            fuente.leer(cola)
+
+            self.assertIsNone(cola.cola[0].tamano)
+            decision = cola.disparo_sensor()
+            self.assertEqual((decision.caja, decision.categoria_final), (1, "revision_manual"))
 
     def test_e1_e2_e3_por_archivos(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -130,6 +158,46 @@ class TestFuenteArchivos(unittest.TestCase):
         self.assertTrue(msg["timestamp"].endswith("Z"))
         self.assertEqual(set(msg["frutas"][0]),
                          {"id_fruta", "categoria_final", "probabilidad", "requiere_revision_manual"})
+
+
+class ClienteE5Falso:
+    def __init__(self, validez_imagen):
+        self.consultas_grupos = 0
+        self.detalle = {
+            "grupo": {"validez_imagen": validez_imagen},
+            "frutas": [{
+                "id_fruta": "F1",
+                "calidad_visual": "alta",
+                "confianza_visual": 0.9,
+                "tamano": "grande",
+                "diametro_mm": 67,
+            }],
+        }
+
+    def get(self, ruta):
+        if ruta == "/api/v1/lotes":
+            return [{"id_lote": "LOTE-X"}]
+        if ruta.endswith("/grupos?limit=100"):
+            self.consultas_grupos += 1
+            if self.consultas_grupos == 1:
+                return []
+            return [{"id_grupo": "G-1", "frutas_detectadas": 1}]
+        if ruta == "/api/v1/grupos/G-1":
+            return self.detalle
+        raise AssertionError(f"Ruta inesperada: {ruta}")
+
+
+class TestFuenteE5(unittest.TestCase):
+    def test_respeta_validez_de_imagen_anidada_en_detalle(self):
+        for validez, esperada in ((True, "exportacion"), (False, "revision_manual")):
+            with self.subTest(validez=validez):
+                fuente = FuenteE5(ClienteE5Falso(validez))
+                cola = ColaFIFO()
+                fuente.leer(cola)  # E4 ignora los grupos que ya existían al arrancar.
+                fuente.leer(cola)
+
+                self.assertEqual(len(cola), 1)
+                self.assertEqual(cola.disparo_sensor().categoria_final, esperada)
 
 
 if __name__ == "__main__":

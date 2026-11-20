@@ -65,6 +65,8 @@ def decidir(p: PaqueteFruta) -> Decision:
       Revisión o faltan datos -> CAJA_REVISION, categoría "revision_manual"
     """
     conf = p.confianza if p.confianza is not None else 0.0
+    if not p.foto_valida:
+        return Decision(p, config.CAJA_REVISION, "revision_manual", 0.0, True, "revision")
     if p.estado == "Mala":
         return Decision(p, config.CAJA_RECHAZO, "rechazo", conf, conf < config.CONFIANZA_MINIMA, "mala")
     if p.estado == "Pasable":

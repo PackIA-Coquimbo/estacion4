@@ -103,13 +103,17 @@ class FuenteE5:
         nuevos = sorted((g for g in grupos if g["id_grupo"] not in self.grupos_vistos),
                         key=lambda g: (g.get("ingreso") or "", _orden_natural(g["id_grupo"])))
         for g in nuevos:
-            ids = self._ids_frutas(g)
+            detalle = self.cliente.get(f"/api/v1/grupos/{quote(g['id_grupo'])}")
+            if not detalle or not isinstance(detalle.get("grupo"), dict):
+                continue
+            ids = self._ids_frutas(g, detalle)
             if not ids:
                 continue                                  # aún no se sabe cuántas frutas trae
             self.grupos_vistos.add(g["id_grupo"])
             self.esperadas[g["id_grupo"]] = len(ids)
+            foto_valida = detalle["grupo"].get("validez_imagen") is True
             for id_fruta in ids:
-                cola.nueva_fruta(None, lote, g["id_grupo"], id_fruta, g.get("validez_imagen") is not False)
+                cola.nueva_fruta(None, lote, g["id_grupo"], id_fruta, foto_valida)
             eventos.append(f"grupo nuevo {g['id_grupo']} con {len(ids)} frutas")
 
         pendientes = {p.id_grupo for p in cola if p.id_grupo and (p.estado is None or p.tamano is None)}
@@ -124,13 +128,12 @@ class FuenteE5:
             if p.id_grupo and (p.estado is None or p.tamano is None):
                 self._rellenar_grupo(cola, p.id_grupo)
 
-    def _ids_frutas(self, g) -> list[str]:
+    def _ids_frutas(self, g, detalle=None) -> list[str]:
         # Por defecto E1 numera F1..Fn (docs/formato_datos/README.md de E5)
         if g.get("frutas_detectadas"):
             return [f"F{k}" for k in range(1, int(g["frutas_detectadas"]) + 1)]
-        det = self.cliente.get(f"/api/v1/grupos/{quote(g['id_grupo'])}")
-        if det and det.get("frutas"):
-            return sorted((f["id_fruta"] for f in det["frutas"]), key=_orden_natural)
+        if detalle and detalle.get("frutas"):
+            return sorted((f["id_fruta"] for f in detalle["frutas"]), key=_orden_natural)
         return []
 
     def _rellenar_grupo(self, cola: ColaFIFO, id_grupo: str):
@@ -210,7 +213,7 @@ class FuenteArchivos:
         if r3 and r3.get("timestamp") != self.ts_e3:
             self.ts_e3 = r3.get("timestamp")
             tam = normalizar.tamano(r3.get("tamano"), r3.get("diametro_mm"))
-            p = cola.rellenar_siguiente("tamano", tam or "Mediana", diametro_mm=r3.get("diametro_mm"))
+            p = cola.rellenar_siguiente("tamano", tam, diametro_mm=r3.get("diametro_mm"))
             eventos.append(f"E3: {tam} -> fruta #{p.n if p else '¿sin paquete?'}")
         return eventos
 
@@ -272,14 +275,3 @@ class ReporteE4:
         if intentos + 1 < 5:
             self.pendientes.append((msg, intentos + 1))
         return [f"no se pudo enviar E4 de {msg['id_grupo']} (intento {intentos + 1}/5): {self.cliente.ultimo_error}"]
-
-# Bloque para enviar la predicción de la IA
-payload_prediccion = {
-    "id_lote": gestor.id_lote,
-    "estacion": "E4",
-    "timestamp": ahora_iso(),
-    "frutas_vistas": sum(vistas),
-    "categoria_predicha": r["categoria"],        
-    "probabilidades": r["probabilidades"],       
-    "pct_esperado": r["pct"],                    # {'pct_pasable', 'pct_chica', 'pct_mediana', 'pct_grande'}
-}
